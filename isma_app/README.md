@@ -1,26 +1,20 @@
-# Biblioteca ISMA — prototipo 0.1
+# Biblioteca ISMA — prototipo dimostrativo v0.2
 
-Questa è una **demo con dati completamente inventati**. Non inserire dati reali della biblioteca o dati personali del personale.
+**Solo dati inventati. Non utilizzare dati reali, personali o istituzionali.**
 
-## Cosa funziona
-- Catalogo: ricerca, inserimento e modifica di alcuni campi.
-- Utenti: inserimento, elenco e storico prestiti.
-- Prestiti: registrazione, restituzione senza cancellazione, rinnovo e storico.
-- Periodici: testate, fascicoli, spoglio e ricerca articoli.
-- Panoramica: contatori e prestiti attivi.
+## Aggiornamenti
+- Catalogo: sezione disciplinare, collocazione, numero di registro inventariale, inventario SBN, registro di provenienza, numero copie, note, classificazione. La ricerca distingue i due identificativi inventariali. La disponibilità dei libri è calcolata dai prestiti attivi e dal numero copie.
+- Periodici: testate (codice, sottotitolo, editore, luogo, anni, ISSN/ISBN, collocazione, note); fascicoli (codice, volume, numero, data, pagine, collocazione, **conservazione** e **disponibilità** separate, note); spoglio articoli (codice, autore, titolo, pagine, parole chiave, Dewey come testo, note). Modifica delle schede e ricerca.
+- Prestiti: stessa interfaccia di v0.1, restituzioni e rinnovi conservati nello storico. Per i libri con più copie il conteggio disponibile è calcolato, ma **non è ancora disponibile la tracciatura del singolo esemplare fisico**.
 
-## Come avviare (su computer personale autorizzato)
-1. Installa Python 3.11 o successivo, se consentito.
-2. Apri il terminale nella cartella del progetto.
-3. Esegui `python -m pip install -r requirements.txt`.
-4. Esegui `python -m streamlit run app.py`.
-5. Apri l'indirizzo locale indicato, di norma `http://localhost:8501`.
+## Pubblicazione aggiornamento GitHub
+Nel repository `biblioteca-isma`, aprire `isma_app/app.py` e scegliere l'icona matita (Edit file). Sostituire **tutto** il contenuto con il file `app.py` di questa versione e confermare `Commit changes`. In alternativa, caricare i file della cartella `isma_app` nel medesimo percorso del repository, sostituendo quelli esistenti. Non creare una nuova cartella annidata.
 
-Per un utilizzo **senza installazioni sui computer della biblioteca**, il progetto deve essere pubblicato su un hosting approvato. L'hosting non è stato ancora configurato e questo pacchetto non è già online.
+Streamlit Community Cloud dovrebbe ridistribuire automaticamente l'app dopo il commit. Il file principale resta `isma_app/app.py`. `requirements.txt` è invariato.
 
-## Limiti importanti
-- SQLite locale non è il database centralizzato multiutente previsto per la versione operativa.
-- Non sono presenti autenticazione, autorizzazioni per ruolo, backup automatici, audit trail o importazione SBN/Access/Excel.
-- La funzione ISBN non interroga ancora servizi bibliografici esterni.
-- I dati demo sono salvati in `demo_isma.sqlite3`, creato al primo avvio. Per ripartire da zero, con l'app chiusa, elimina quel file.
-- Non usare il prototipo per gestire dati reali o riservati.
+## Avvertenze
+- Il database SQLite è locale all'istanza Streamlit: può essere cancellato da riavvii o ridistribuzioni. Non è persistente né adatto a uso multiutente operativo.
+- I dati inseriti nella versione precedente possono non essere conservati dopo il deployment; eventuali dati demo non sono garantiti.
+- Non sono presenti autenticazione, backup centralizzato, importazione dei registri Excel, integrazione SBN, gestione delle copie fisiche, né collegamento automatico dei prestiti ai fascicoli.
+- Il campo disponibilità del fascicolo è per ora manuale. L'integrazione con i prestiti dei periodici sarà una fase successiva.
+- Per l'uso reale sono necessarie verifiche di autorizzazione, sicurezza e protezione dei dati.
