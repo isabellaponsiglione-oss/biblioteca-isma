@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime
 import io
 import re
 from datetime import date, timedelta
@@ -7,6 +8,14 @@ import streamlit as st
 import pandas as pd
 
 st.set_page_config(page_title='Biblioteca ISMA | Prototipo',page_icon='📚',layout='wide')
+st.markdown("""<style>
+/* Migliora la leggibilità senza modificare la logica delle schede. */
+html, body, [class*="css"], [data-testid="stAppViewContainer"] {font-size: 17px;}
+[data-testid="stSidebar"] label, [data-testid="stSidebar"] p {font-size: 17px !important;}
+[data-testid="stWidgetLabel"] p, [data-testid="stMarkdownContainer"] p {font-size: 16px;}
+button, input, textarea, [data-baseweb="select"] {font-size: 16px !important;}
+[data-testid="stDataFrame"] {font-size: 15px;}
+</style>""", unsafe_allow_html=True)
 DB=Path(__file__).with_name('demo_isma.sqlite3')
 
 def connect():
@@ -142,8 +151,8 @@ def deletion_ui(table, item_id, label, key, linked=(), soft=False):
 
 setup()
 st.title('📚 Biblioteca ISMA')
-st.caption('Versione 0.2.2 • PROTOTIPO DIMOSTRATIVO • Solo dati fittizi • Database locale di prova')
-st.warning('Questa versione non è adatta all’uso operativo: non dispone di autenticazione, database multiutente centralizzato o backup automatici. Non inserire dati reali o riservati.',icon='⚠️')
+st.caption('Versione 0.2.3 • PROTOTIPO DIMOSTRATIVO • Solo dati fittizi • Database locale di prova')
+st.warning('Versione dimostrativa: non dispone ancora di autenticazione, database centralizzato persistente o backup automatici esterni. Non inserire dati reali o riservati.',icon='⚠️')
 page=st.sidebar.radio('Navigazione',['🏠 Panoramica','📚 Catalogo monografie','📰 Catalogo periodici','🔄 Prestiti','👥 Utenti','📤 Esporta Excel','⚙️ Informazioni'])
 
 if page=='🏠 Panoramica':
@@ -405,6 +414,11 @@ elif page=='📰 Catalogo periodici':
 elif page=='📤 Esporta Excel':
     st.header('Esportazione dati in Excel')
     st.caption('Scarica un archivio in formato XLSX. Contiene anche recapiti e note: conservarlo in modo protetto.')
+    st.subheader('Riepilogo registrazioni')
+    table_names={'Monografie':'books','Testate':'journals','Fascicoli':'issues','Articoli':'articles','Utenti':'readers','Prestiti':'loans'}
+    counts={label:int(fetch(f'SELECT COUNT(*) AS n FROM {table}').iloc[0,0]) for label,table in table_names.items()}
+    st.dataframe(pd.DataFrame([{'Archivio':k,'Registrazioni attuali':v} for k,v in counts.items()]),hide_index=True,use_container_width=True)
+    st.caption('I conteggi si riferiscono al database attualmente aperto da questa istanza della demo.')
     datasets={
       'Monografie':"""SELECT id AS ID,title AS Titolo,author AS Autore,isbn AS ISBN,publisher AS Editore,year AS Anno,subject AS Soggetto,classification AS Classificazione,section AS Sezione,location AS Collocazione,register_number AS "N. registro inventariale",sbn_inventory AS "Inventario SBN",register_source AS "Registro di provenienza",work_group AS "Codice opera multivolume",volume_label AS Volume,copies AS Copie,available AS Disponibili,notes AS Note,withdrawn AS Dismesso FROM books ORDER BY section,location""",
       'Testate':"""SELECT id AS ID,journal_code AS "Codice testata",title AS "Titolo testata",subtitle AS Sottotitolo,publisher AS Editore,place AS Luogo,start_year AS "Anno inizio",end_year AS "Anno fine",issn AS ISSN,location AS Collocazione,notes AS Note FROM journals ORDER BY journal_code""",
@@ -435,11 +449,22 @@ elif page=='📤 Esporta Excel':
                     ws.column_dimensions[letter].width=min(55,max(16,max(len(str(c.value or '')) for c in list(cells)[:150])+2))
                     if any(t in str(cells[0].value).lower() for t in ('isbn','issn','collocazione','inventario','registro','codice','progressivo','telefono')):
                         for cell in list(cells)[1:]:cell.number_format='@'
-        st.download_button('⬇️ Scarica Excel',buffer.getvalue(),file_name='biblioteca_isma_demo_v022.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        st.download_button('⬇️ Scarica Excel',buffer.getvalue(),file_name='biblioteca_isma_demo_v023.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     st.info('Questa esportazione non sostituisce il backup tecnico del database.')
+    st.subheader('Copia manuale del database dimostrativo')
+    st.warning('La copia è soltanto manuale: non è un backup automatico, né garantisce la conservazione dei dati sul server Streamlit.')
+    if st.button('Prepara copia SQLite'):
+        snapshot=io.BytesIO()
+        with connect() as source:
+            with sqlite3.connect(':memory:') as target:
+                source.backup(target)
+                for line in target.iterdump():
+                    snapshot.write((line+'\n').encode('utf-8'))
+        st.download_button('⬇️ Scarica copia SQL della demo',snapshot.getvalue(),file_name='biblioteca_isma_demo_'+datetime.now().strftime('%Y%m%d_%H%M%S')+'.sql',mime='application/sql')
+    st.caption('Il file SQL contiene tutte le tabelle e i dati della demo. Non condividerlo pubblicamente.')
 
 else:
     st.header('Informazioni sul prototipo')
-    st.write('Versione 0.2.2: demo locale con SQLite, dati fittizi, catalogo, utenti, prestiti con storico e spoglio periodici.')
-    st.write('Non ancora implementati: accesso con credenziali, gestione multiutente in produzione, importazione Access/Excel/SBN, ricerca ISBN automatica, backup, ruoli e registro operazioni.')
+    st.write('Versione 0.2.3: demo con caratteri più leggibili, conteggi archivio e copia manuale SQL, oltre alle funzioni della 0.2.2.')
+    st.write('Non ancora implementati: autenticazione, database persistente multiutente, backup automatici esterni e verifica di ripristino, importazione Access/Excel/SBN, ricerca ISBN, ruoli e registro operazioni.')
     st.info('Per la versione operativa serviranno verifiche di autorizzazione, sicurezza e trattamento dei dati dell’Amministrazione.')

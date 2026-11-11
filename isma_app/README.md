@@ -1,20 +1,18 @@
-# Biblioteca ISMA — prototipo dimostrativo 0.2.2
+# Biblioteca ISMA - Prototipo 0.2.3
 
-Applicazione Streamlit dimostrativa, con dati esclusivamente fittizi.
+Versione di collaudo con dati esclusivamente fittizi.
 
-## Aggiornamenti 0.2.2
-- Menu: Panoramica, Catalogo monografie, Catalogo periodici, Prestiti, Utenti, Esporta Excel, Informazioni.
-- Utenti: Nome e Cognome distinti, Tipologia utente al posto del Grado. I dati demo preesistenti vengono migrati in modo conservativo (verificare manualmente eventuali nomi composti).
-- Monografie: sezione ricavata dalla collocazione; collegamento dei volumi tramite codice dell'opera; condivisione inventariale consentita per volumi collegati.
-- Fascicoli: progressivo proposto per ciascuna testata, collocazione derivata automaticamente, numeri pubblicati anche doppi (es. 5-6), controlli su codici e collocazioni duplicate.
-- Articoli: progressivo proposto per ciascun fascicolo e controllo duplicati.
-- Excel: fogli con intestazioni italiane, dati gerarchici testata/fascicolo/articolo, ordinamento e formato migliorato.
-- Prestiti: logica mantenuta dalla 0.2.1.
+## Novità
+- Testi dell'interfaccia leggermente più grandi.
+- Riepilogo del numero di registrazioni per archivio nella pagina Esporta Excel.
+- Copia manuale SQL del database dimostrativo, ottenuta da uno snapshot SQLite consistente.
+- Conservate le funzioni della 0.2.2: cataloghi, prestiti, utenti, numerazioni periodici, export Excel.
 
-## Installazione su GitHub
-Sostituire i file nella cartella `isma_app/` del repository e confermare con Commit changes. Il file principale resta `isma_app/app.py`.
+## Installazione
+Sostituire `app.py`, `requirements.txt` e `README.md` nella cartella `isma_app/` del repository GitHub. Streamlit Cloud ridistribuisce l'applicazione automaticamente.
 
-## Avvertenze
-Il database SQLite è locale alla demo e può essere azzerato da un riavvio o ridistribuzione su Streamlit Community Cloud. Questa versione **non** è adatta a dati reali o riservati: non dispone di autenticazione, backup automatici o database multiutente persistente. L'esportazione Excel non sostituisce il backup tecnico.
+## Avvertenze di sicurezza
+Non utilizzare dati reali o riservati. Questa versione NON include login, database persistente condiviso, backup automatici esterni, cifratura gestita o audit. Lo storage locale di Streamlit Community Cloud non è affidabile come archivio operativo. La copia SQL va scaricata e conservata manualmente in luogo protetto e non rappresenta un sistema di backup verificato per l'uso operativo.
 
-Non sono ancora implementati: recupero bibliografico via ISBN, importazione massiva dei registri storici, invio email automatiche e hosting operativo protetto.
+## Passo successivo per uso operativo
+Definire una soluzione con database esterno persistente, autenticazione individuale dei tre operatori, autorizzazioni, backup programmati esterni e prove periodiche di ripristino. Prima di inserire dati della biblioteca militare, verificare con i responsabili competenti le regole di trattamento, sicurezza e ospitalità esterna.
