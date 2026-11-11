@@ -1,4 +1,6 @@
 import sqlite3
+import io
+import re
 from datetime import date, timedelta
 from pathlib import Path
 import streamlit as st
@@ -29,7 +31,8 @@ def setup():
             for name,kind in definitions.items():
                 if name not in existing:
                     c.execute(f'ALTER TABLE {table} ADD COLUMN {name} {kind}')
-        add_cols('books', {'section':'TEXT','register_number':'TEXT','sbn_inventory':'TEXT','register_source':'TEXT','copies':'INTEGER NOT NULL DEFAULT 1','notes':'TEXT','classification':'TEXT'})
+        add_cols('readers', {'email':'TEXT','other_contacts':'TEXT','notes':'TEXT','reminders_enabled':'INTEGER NOT NULL DEFAULT 0'})
+        add_cols('books', {'section':'TEXT','register_number':'TEXT','sbn_inventory':'TEXT','register_source':'TEXT','copies':'INTEGER NOT NULL DEFAULT 1','notes':'TEXT','classification':'TEXT','work_group':'TEXT','volume_label':'TEXT','withdrawn':'INTEGER NOT NULL DEFAULT 0'})
         add_cols('journals', {'journal_code':'TEXT','subtitle':'TEXT','publisher':'TEXT','place':'TEXT','start_year':'TEXT','end_year':'TEXT','location':'TEXT','notes':'TEXT'})
         add_cols('issues', {'issue_code':'TEXT','volume':'TEXT','pages':'TEXT','location':'TEXT','conservation':'TEXT NOT NULL DEFAULT "Non valutato"','availability':'TEXT NOT NULL DEFAULT "Disponibile"','conservation_notes':'TEXT','notes':'TEXT'})
         add_cols('articles', {'article_code':'TEXT','dewey':'TEXT','notes':'TEXT'})
@@ -55,11 +58,54 @@ def execute(query,params=()):
 def options(query):
     with connect() as c: return [dict(r) for r in c.execute(query)]
 
+def clean(value):
+    return (value or '').strip().upper()
+
+def conflict(table, field, value, exclude=None):
+    if not clean(value):
+        return False
+    sql=f'SELECT COUNT(*) FROM {table} WHERE UPPER(TRIM(COALESCE({field}, "")))=?'
+    args=[clean(value)]
+    if exclude is not None:
+        sql+=' AND id<>?'
+        args.append(exclude)
+    with connect() as c:
+        return c.execute(sql,args).fetchone()[0]>0
+
+def inventory_warning(register_number, sbn_inventory, register_source, group, exclude=None):
+    with connect() as c:
+        rows=c.execute('SELECT id,register_number,sbn_inventory,register_source,work_group FROM books WHERE id<>?',(exclude or -1,)).fetchall()
+    matches=[]
+    for r in rows:
+        same_group=bool(clean(group)) and clean(group)==clean(r['work_group'])
+        if clean(register_number) and clean(register_number)==clean(r['register_number']) and clean(register_source)==clean(r['register_source']) and not same_group:
+            matches.append('numero di registro inventariale (nello stesso registro)')
+        if clean(sbn_inventory) and clean(sbn_inventory)==clean(r['sbn_inventory']) and not same_group:
+            matches.append('inventario SBN')
+    return sorted(set(matches))
+
+def deletion_ui(table, item_id, label, key, linked=(), soft=False):
+    with st.expander('🗑️ Elimina / dismetti la registrazione selezionata'):
+        st.warning(f'Operazione riferita a: {label}')
+        confirmed=st.checkbox('Confermo di voler procedere',key=f'{key}_confirm')
+        if st.button('Conferma eliminazione',disabled=not confirmed,key=f'{key}_delete'):
+            with connect() as c:
+                for child,foreign in linked:
+                    if c.execute(f'SELECT COUNT(*) FROM {child} WHERE {foreign}=?',(item_id,)).fetchone()[0]:
+                        st.error('Eliminazione bloccata: esistono registrazioni collegate.');return
+                if soft:
+                    if c.execute('SELECT COUNT(*) FROM loans WHERE book_id=?',(item_id,)).fetchone()[0]:
+                        c.execute('UPDATE books SET withdrawn=1 WHERE id=?',(item_id,))
+                        st.success('Volume contrassegnato come dismesso: lo storico dei prestiti resta conservato.')
+                        st.rerun()
+                c.execute(f'DELETE FROM {table} WHERE id=?',(item_id,))
+            st.success('Registrazione eliminata.');st.rerun()
+
 setup()
 st.title('📚 Biblioteca ISMA')
-st.caption('PROTOTIPO DIMOSTRATIVO • Solo dati fittizi • Database locale di prova')
+st.caption('Versione 0.2.1 • PROTOTIPO DIMOSTRATIVO • Solo dati fittizi • Database locale di prova')
 st.warning('Questa versione non è adatta all’uso operativo: non dispone di autenticazione, database multiutente centralizzato o backup automatici. Non inserire dati reali o riservati.',icon='⚠️')
-page=st.sidebar.radio('Navigazione',['🏠 Panoramica','📚 Catalogo','🔄 Prestiti','👥 Utenti','📰 Periodici','⚙️ Informazioni'])
+page=st.sidebar.radio('Navigazione',['🏠 Panoramica','📚 Catalogo','🔄 Prestiti','👥 Utenti','📰 Periodici','📤 Esporta Excel','⚙️ Informazioni'])
 
 if page=='🏠 Panoramica':
     books=fetch('SELECT COUNT(*) n FROM books').iloc[0,0]
@@ -78,10 +124,10 @@ elif page=='📚 Catalogo':
     q='''SELECT id, title AS Titolo,author AS Autore,isbn AS ISBN,section AS Sezione,location AS Collocazione,
            register_number AS "N. registro",sbn_inventory AS "Inventario SBN",copies AS Copie,
            (copies-(SELECT COUNT(*) FROM loans l WHERE l.book_id=books.id AND l.returned_at IS NULL)) AS Disponibili,
-           register_source AS Registro FROM books'''
+           register_source AS Registro,volume_label AS Volume,withdrawn AS Dismesso FROM books'''
     params=()
     if term.strip():
-        cols=['title','author','isbn','subject','location','register_number','sbn_inventory','section','register_source']
+        cols=['title','author','isbn','subject','location','register_number','sbn_inventory','section','register_source','work_group','volume_label']
         q+=' WHERE '+' OR '.join(f'COALESCE({col},"") LIKE ?' for col in cols)
         params=tuple('%'+term.strip()+'%' for _ in cols)
     st.dataframe(fetch(q+' ORDER BY title',params),hide_index=True,use_container_width=True)
@@ -92,15 +138,19 @@ elif page=='📚 Catalogo':
                 title=st.text_input('Titolo *');author=st.text_input('Autore');isbn=st.text_input('ISBN');publisher=st.text_input('Editore');year=st.number_input('Anno edizione',0,2100,2026)
                 subject=st.text_input('Soggetto');classification=st.text_input('Classificazione')
             with b:
-                section=st.text_input('Sezione disciplinare (es. K)');location=st.text_input('Collocazione (es. K-003)')
+                section=st.text_input('Sezione disciplinare (es. K)');location=st.text_input('Collocazione (es. G-120 oppure G-120-001)')
+                work_group=st.text_input('Codice opera in più volumi (es. G-120)');volume_label=st.text_input('Numero / descrizione volume (es. 001)')
                 register_number=st.text_input('N. registro inventario');sbn_inventory=st.text_input('Inventario SBN')
                 register_source=st.text_input('Registro di provenienza');copies=st.number_input('Numero copie',1,999,1)
                 notes=st.text_area('Note inventariali')
             if st.form_submit_button('Salva scheda'):
                 if not title.strip():st.error('Il titolo è obbligatorio.')
+                elif not location.strip():st.error('La collocazione è obbligatoria.')
+                elif conflict('books','location',location):st.error('Collocazione già presente nel catalogo.')
+                elif inventory_warning(register_number,sbn_inventory,register_source,work_group):st.error('Identificativo già presente: '+', '.join(inventory_warning(register_number,sbn_inventory,register_source,work_group))+'. Per volumi della stessa opera, indicare lo stesso codice opera in più volumi.')
                 else:
-                    execute('''INSERT INTO books(title,author,isbn,publisher,year,subject,classification,section,location,register_number,sbn_inventory,register_source,copies,notes)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(title,author,isbn,publisher,year,subject,classification,section,location,register_number,sbn_inventory,register_source,copies,notes))
+                    execute('''INSERT INTO books(title,author,isbn,publisher,year,subject,classification,section,location,register_number,sbn_inventory,register_source,copies,notes,work_group,volume_label)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(title,author,isbn,publisher,year,subject,classification,section,location,register_number,sbn_inventory,register_source,copies,notes,work_group,volume_label))
                     st.success('Scheda salvata.');st.rerun()
     with st.expander('✏️ Modifica scheda'):
         books=options('SELECT id,title,location FROM books ORDER BY title')
@@ -114,32 +164,51 @@ elif page=='📚 Catalogo':
                     publisher=st.text_input('Editore',row['publisher'] or '');year=st.number_input('Anno edizione',0,2100,int(row['year'] or 2026));subject=st.text_input('Soggetto',row['subject'] or '');classification=st.text_input('Classificazione',row['classification'] or '')
                 with b:
                     section=st.text_input('Sezione',row['section'] or '');location=st.text_input('Collocazione',row['location'] or '')
+                    work_group=st.text_input('Codice opera in più volumi',row['work_group'] or '');volume_label=st.text_input('Numero / descrizione volume',row['volume_label'] or '')
                     register_number=st.text_input('N. registro',row['register_number'] or '');sbn_inventory=st.text_input('Inventario SBN',row['sbn_inventory'] or '')
                     register_source=st.text_input('Registro di provenienza',row['register_source'] or '');copies=st.number_input('Numero copie',1,999,int(row['copies'] or 1));notes=st.text_area('Note',row['notes'] or '')
                 if st.form_submit_button('Aggiorna scheda'):
                     active=int(fetch('SELECT COUNT(*) n FROM loans WHERE book_id=? AND returned_at IS NULL',(chosen['id'],)).iloc[0,0])
                     if not title.strip():st.error('Titolo obbligatorio.')
                     elif copies<active:st.error(f'Impossibile ridurre le copie sotto i {active} prestiti attivi.')
+                    elif not location.strip():st.error('Collocazione obbligatoria.')
+                    elif conflict('books','location',location,chosen['id']):st.error('Collocazione già presente nel catalogo.')
+                    elif inventory_warning(register_number,sbn_inventory,register_source,work_group,chosen['id']):st.error('Identificativo già presente: '+', '.join(inventory_warning(register_number,sbn_inventory,register_source,work_group,chosen['id'])))
                     else:
-                        execute('''UPDATE books SET title=?,author=?,isbn=?,publisher=?,year=?,subject=?,classification=?,section=?,location=?,register_number=?,sbn_inventory=?,register_source=?,copies=?,notes=? WHERE id=?''',
-                                (title,author,isbn,publisher,year,subject,classification,section,location,register_number,sbn_inventory,register_source,copies,notes,chosen['id']))
+                        execute('''UPDATE books SET title=?,author=?,isbn=?,publisher=?,year=?,subject=?,classification=?,section=?,location=?,register_number=?,sbn_inventory=?,register_source=?,copies=?,notes=?,work_group=?,volume_label=? WHERE id=?''',
+                                (title,author,isbn,publisher,year,subject,classification,section,location,register_number,sbn_inventory,register_source,copies,notes,work_group,volume_label,chosen['id']))
                         st.success('Scheda aggiornata.');st.rerun()
+            deletion_ui('books',chosen['id'],chosen['title'],'book',soft=True)
     st.info('Importazione dai registri Excel, riconciliazione con Access/SBN e gestione fisica individuale delle copie: previste per una fase successiva.')
 
 elif page=='👥 Utenti':
     st.header('Utenti')
-    st.dataframe(fetch('SELECT id,name AS Nominativo,rank AS Grado,course AS Corso,office AS Ufficio FROM readers ORDER BY name'),hide_index=True,use_container_width=True)
+    st.dataframe(fetch('SELECT id,name AS Nominativo,rank AS Grado,course AS Corso,office AS Ufficio,phone AS Telefono,email AS Email,other_contacts AS "Altri recapiti",notes AS Note,reminders_enabled AS "Promemoria (predisposti)" FROM readers ORDER BY name'),hide_index=True,use_container_width=True)
     with st.expander('➕ Nuovo utente'):
         with st.form('new_reader',clear_on_submit=True):
-            name=st.text_input('Nominativo *'); rank=st.text_input('Grado'); course=st.text_input('Corso'); office=st.text_input('Ufficio')
+            name=st.text_input('Nominativo *');rank=st.text_input('Grado');course=st.text_input('Corso');office=st.text_input('Ufficio')
+            phone=st.text_input('Telefono');email=st.text_input('Email');other=st.text_input('Altri recapiti');notes=st.text_area('Note');reminders=st.checkbox('Consenti promemoria email (funzione non attiva nella demo)')
             if st.form_submit_button('Salva utente'):
                 if name.strip():
-                    execute('INSERT INTO readers(name,rank,course,office) VALUES(?,?,?,?)',(name,rank,course,office));st.success('Utente salvato.');st.rerun()
+                    execute('INSERT INTO readers(name,rank,course,office,phone,email,other_contacts,notes,reminders_enabled) VALUES(?,?,?,?,?,?,?,?,?)',(name,rank,course,office,phone,email,other,notes,int(reminders)))
+                    st.success('Utente salvato.');st.rerun()
                 else:st.error('Nominativo obbligatorio.')
     people=options('SELECT id,name FROM readers ORDER BY name')
     if people:
-        person=st.selectbox('Consulta lo storico di un utente',people,format_func=lambda r:r['name'])
-        st.dataframe(fetch('''SELECT b.title AS Titolo,l.loan_date AS Prestito,l.due_date AS Scadenza,l.returned_at AS Restituzione,l.renewals AS Rinnovi FROM loans l JOIN books b ON b.id=l.book_id WHERE l.reader_id=? ORDER BY l.loan_date DESC''',(person['id'],)),hide_index=True,use_container_width=True)
+        chosen=st.selectbox('Seleziona utente',people,format_func=lambda r:r['name'])
+        with connect() as c:r=dict(c.execute('SELECT * FROM readers WHERE id=?',(chosen['id'],)).fetchone())
+        with st.expander('✏️ Modifica utente'):
+            with st.form('edit_reader'):
+                name=st.text_input('Nominativo',r['name']);rank=st.text_input('Grado',r['rank'] or '');course=st.text_input('Corso',r['course'] or '');office=st.text_input('Ufficio',r['office'] or '')
+                phone=st.text_input('Telefono',r['phone'] or '');email=st.text_input('Email',r['email'] or '');other=st.text_input('Altri recapiti',r['other_contacts'] or '');notes=st.text_area('Note',r['notes'] or '');reminders=st.checkbox('Consenti promemoria email (non attivi)',bool(r['reminders_enabled']))
+                if st.form_submit_button('Aggiorna utente'):
+                    if not name.strip():st.error('Nominativo obbligatorio.')
+                    else:
+                        execute('UPDATE readers SET name=?,rank=?,course=?,office=?,phone=?,email=?,other_contacts=?,notes=?,reminders_enabled=? WHERE id=?',(name,rank,course,office,phone,email,other,notes,int(reminders),chosen['id']))
+                        st.rerun()
+        deletion_ui('readers',chosen['id'],chosen['name'],'reader',linked=[('loans','reader_id')])
+        st.subheader('Storico prestiti dell’utente')
+        st.dataframe(fetch("SELECT b.title AS Titolo,l.loan_date AS Prestito,l.due_date AS Scadenza,l.returned_at AS Restituzione,l.renewals AS Rinnovi FROM loans l JOIN books b ON b.id=l.book_id WHERE l.reader_id=? ORDER BY l.loan_date DESC",(chosen['id'],)),hide_index=True,use_container_width=True)
 
 elif page=='🔄 Prestiti':
     st.header('Prestiti e restituzioni')
@@ -191,7 +260,9 @@ elif page=='📰 Periodici':
             with st.form('journal_v02'):
                 code=st.text_input('ID periodico (es. RIV-001)');title=st.text_input('Titolo *');subtitle=st.text_input('Sottotitolo');publisher=st.text_input('Editore');place=st.text_input('Luogo');start_year=st.text_input('Anno inizio');end_year=st.text_input('Anno fine');issn=st.text_input('ISSN / ISBN');location=st.text_input('Collocazione');notes=st.text_area('Note')
                 if st.form_submit_button('Salva testata'):
-                    if title.strip():
+                    if not code.strip():st.error('Codice periodico obbligatorio.')
+                    elif conflict('journals','journal_code',code):st.error('Codice periodico già presente.')
+                    elif title.strip():
                         execute('''INSERT INTO journals(journal_code,title,subtitle,publisher,place,start_year,end_year,issn,location,notes) VALUES(?,?,?,?,?,?,?,?,?,?)''',(code,title,subtitle,publisher,place,start_year,end_year,issn,location,notes));st.rerun()
                     else:st.error('Titolo obbligatorio.')
         journals=options('SELECT id,title,journal_code FROM journals ORDER BY title')
@@ -205,8 +276,11 @@ elif page=='📰 Periodici':
                         fields[col]=st.text_input(label,r[col] or '')
                     if st.form_submit_button('Aggiorna testata'):
                         if not fields['title'].strip():st.error('Titolo obbligatorio.')
+                        elif not fields['journal_code'].strip():st.error('Codice periodico obbligatorio.')
+                        elif conflict('journals','journal_code',fields['journal_code'],chosen['id']):st.error('Codice periodico già presente.')
                         else:
                             execute('UPDATE journals SET '+','.join(f'{col}=?' for col in fields)+' WHERE id=?',tuple(fields.values())+(chosen['id'],));st.rerun()
+            deletion_ui('journals',chosen['id'],chosen['title'],'journal',linked=[('issues','journal_id')])
     with t2:
         st.dataframe(fetch('''SELECT i.id,j.title AS Testata,i.issue_code AS "Codice fascicolo",i.year AS Anno,i.volume AS Volume,i.number AS Numero,i.issue_date AS Data,i.pages AS Pagine,i.location AS Collocazione,i.conservation AS Conservazione,i.availability AS Disponibilità,i.conservation_notes AS "Note conservazione",i.notes AS Note FROM issues i JOIN journals j ON j.id=i.journal_id ORDER BY j.title,i.year DESC'''),hide_index=True,use_container_width=True)
         journals=options('SELECT id,title,journal_code,location FROM journals ORDER BY title')
@@ -228,6 +302,7 @@ elif page=='📰 Periodici':
                     conservation=st.selectbox('Conservazione',cons,index=cons.index(r['conservation']) if r['conservation'] in cons else 0);availability=st.selectbox('Disponibilità',av,index=av.index(r['availability']) if r['availability'] in av else 0);conservation_notes=st.text_area('Note conservazione',r['conservation_notes'] or '');notes=st.text_area('Note',r['notes'] or '')
                     if st.form_submit_button('Aggiorna fascicolo'):
                         execute('''UPDATE issues SET issue_code=?,year=?,volume=?,number=?,issue_date=?,pages=?,location=?,conservation=?,availability=?,conservation_notes=?,notes=? WHERE id=?''',(issue_code,year,volume,number,issue_date,pages,location,conservation,availability,conservation_notes,notes,selected['id']));st.rerun()
+            deletion_ui('issues',selected['id'],str(selected['title'])+' / '+str(selected['year']),'issue',linked=[('articles','issue_id')])
     with t3:
         term=st.text_input('Cerca articoli per titolo, autore, parole chiave, Dewey, testata')
         q='''SELECT j.title AS Testata,i.issue_code AS Fascicolo,i.year AS Anno,a.article_code AS "ID articolo",a.author AS Autori,a.title AS Articolo,a.pages AS Pagine,a.keywords AS "Parole chiave",a.dewey AS Dewey,a.notes AS Note FROM articles a JOIN issues i ON i.id=a.issue_id JOIN journals j ON j.id=i.journal_id'''
@@ -256,10 +331,45 @@ elif page=='📰 Periodici':
                         if title.strip():
                             execute('UPDATE articles SET article_code=?,author=?,title=?,pages=?,keywords=?,dewey=?,notes=? WHERE id=?',(code,author,title,pages,keywords,dewey,notes,selected['id']));st.rerun()
                         else:st.error('Titolo obbligatorio.')
+            deletion_ui('articles',selected['id'],selected['title'],'article')
 
+
+elif page=='📤 Esporta Excel':
+    st.header('Esportazione dati in Excel')
+    st.caption('Scarica un archivio in formato XLSX. Contiene anche recapiti e note: conservarlo in modo protetto.')
+    datasets={
+      'Monografie':'SELECT * FROM books ORDER BY id',
+      'Testate':'SELECT * FROM journals ORDER BY id',
+      'Fascicoli':'SELECT * FROM issues ORDER BY id',
+      'Articoli':'SELECT * FROM articles ORDER BY id',
+      'Utenti':'SELECT * FROM readers ORDER BY id',
+      'Prestiti':'SELECT * FROM loans ORDER BY id',
+    }
+    chosen=st.selectbox('Dati da esportare',['Archivio completo']+list(datasets))
+    if st.button('Prepara file Excel'):
+        buffer=io.BytesIO()
+        with pd.ExcelWriter(buffer,engine='openpyxl') as writer:
+            names=datasets if chosen=='Archivio completo' else {chosen:datasets[chosen]}
+            for name,sql in names.items():
+                frame=fetch(sql)
+                # I codici sono testo, per mantenere zeri iniziali e trattini.
+                for col in frame.columns:
+                    if col in ('isbn','location','inventory','register_number','sbn_inventory','journal_code','issue_code','article_code','issn','phone'):
+                        frame[col]=frame[col].astype('string')
+                frame.to_excel(writer,sheet_name=name,index=False)
+                ws=writer.sheets[name]
+                ws.freeze_panes='A2'
+                ws.auto_filter.ref=ws.dimensions
+                for cells in ws.columns:
+                    letter=cells[0].column_letter
+                    ws.column_dimensions[letter].width=min(45,max(14,max(len(str(c.value or '')) for c in list(cells)[:150])+2))
+                    if cells[0].value in ('isbn','location','inventory','register_number','sbn_inventory','journal_code','issue_code','article_code','issn','phone'):
+                        for cell in list(cells)[1:]:cell.number_format='@'
+        st.download_button('⬇️ Scarica Excel',buffer.getvalue(),file_name='biblioteca_isma_demo.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    st.info('Questa esportazione non sostituisce il backup tecnico del database.')
 
 else:
     st.header('Informazioni sul prototipo')
-    st.write('Versione 0.2.0: demo locale con SQLite, dati fittizi, catalogo, utenti, prestiti con storico e spoglio periodici.')
+    st.write('Versione 0.2.1: demo locale con SQLite, dati fittizi, catalogo, utenti, prestiti con storico e spoglio periodici.')
     st.write('Non ancora implementati: accesso con credenziali, gestione multiutente in produzione, importazione Access/Excel/SBN, ricerca ISBN automatica, backup, ruoli e registro operazioni.')
     st.info('Per la versione operativa serviranno verifiche di autorizzazione, sicurezza e trattamento dei dati dell’Amministrazione.')
