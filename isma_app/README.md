@@ -1,16 +1,20 @@
-# Biblioteca ISMA — Prototipo dimostrativo 0.2.1
+# Biblioteca ISMA — prototipo dimostrativo 0.2.2
 
-Applicazione Streamlit per prove **esclusivamente con dati fittizi**. Non usare dati personali, documenti interni o inventari reali: questa versione non dispone di autenticazione, archivio condiviso affidabile, backup automatici o controlli di sicurezza idonei alla produzione.
+Applicazione Streamlit dimostrativa, con dati esclusivamente fittizi.
 
-## Novità 0.2.1
-- Catalogo: collocazione obbligatoria e controllo dei duplicati; campi per opere in più volumi (codice opera e numero volume); identificativi inventariali condivisibili tra volumi della stessa opera; modifica ed eliminazione (dismissione se esistono prestiti).
-- Periodici: codice testata obbligatorio e non duplicabile in inserimento/modifica; cancellazione con conferma di testate, fascicoli e articoli, impedita se esistono dati collegati.
-- Utenti: telefono, email, altri recapiti, note e preferenza per promemoria futuri; modifica ed eliminazione con conferma e protezione dello storico prestiti.
-- Esporta Excel: scarica un file XLSX completo con sei fogli (Monografie, Testate, Fascicoli, Articoli, Utenti, Prestiti), oppure una sola sezione.
-- Prestiti: logica lasciata invariata rispetto alla versione 0.2.
+## Aggiornamenti 0.2.2
+- Menu: Panoramica, Catalogo monografie, Catalogo periodici, Prestiti, Utenti, Esporta Excel, Informazioni.
+- Utenti: Nome e Cognome distinti, Tipologia utente al posto del Grado. I dati demo preesistenti vengono migrati in modo conservativo (verificare manualmente eventuali nomi composti).
+- Monografie: sezione ricavata dalla collocazione; collegamento dei volumi tramite codice dell'opera; condivisione inventariale consentita per volumi collegati.
+- Fascicoli: progressivo proposto per ciascuna testata, collocazione derivata automaticamente, numeri pubblicati anche doppi (es. 5-6), controlli su codici e collocazioni duplicate.
+- Articoli: progressivo proposto per ciascun fascicolo e controllo duplicati.
+- Excel: fogli con intestazioni italiane, dati gerarchici testata/fascicolo/articolo, ordinamento e formato migliorato.
+- Prestiti: logica mantenuta dalla 0.2.1.
 
-## Installazione su GitHub / Streamlit
-Sostituire `isma_app/app.py`, `isma_app/requirements.txt` e `isma_app/README.md` nel repository esistente. Il file principale resta `isma_app/app.py`. Streamlit Community Cloud ridistribuisce l'app dopo il commit.
+## Installazione su GitHub
+Sostituire i file nella cartella `isma_app/` del repository e confermare con Commit changes. Il file principale resta `isma_app/app.py`.
 
-## Limiti
-I dati sono conservati in SQLite sul filesystem dell'istanza Streamlit: **non sono un archivio permanente** e possono scomparire a un riavvio o ridistribuzione. I dati di prova precedenti potrebbero non sopravvivere all'aggiornamento. L'export Excel è una copia consultabile, non un backup transazionale del database. L'invio email, la ricerca ISBN, l'importazione Excel, la persistenza multiutente e l'autenticazione non sono ancora attivi.
+## Avvertenze
+Il database SQLite è locale alla demo e può essere azzerato da un riavvio o ridistribuzione su Streamlit Community Cloud. Questa versione **non** è adatta a dati reali o riservati: non dispone di autenticazione, backup automatici o database multiutente persistente. L'esportazione Excel non sostituisce il backup tecnico.
+
+Non sono ancora implementati: recupero bibliografico via ISBN, importazione massiva dei registri storici, invio email automatiche e hosting operativo protetto.
