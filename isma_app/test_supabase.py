@@ -6,7 +6,7 @@ import requests
 
 st.set_page_config(page_title='Biblioteca ISMA | Test accessi', page_icon='📚')
 st.title('📚 Biblioteca ISMA — Test accessi')
-st.caption('Versione tecnica 0.2.5 • Verifica autenticazione • Sola lettura')
+st.caption('Versione tecnica 0.2.6 • Collaudo persistenza con dati fittizi')
 st.warning('Pagina di prova, non gestionale. Non inserire dati bibliografici o personali reali.')
 
 needed = ('SUPABASE_URL', 'SUPABASE_ANON_KEY', 'DATABASE_URL')
@@ -75,3 +75,32 @@ if st.button('Verifica collegamento e sei tabelle'):
         st.success('Verifica tecnica completata.')
     except Exception:
         st.error('Verifica non riuscita. Controlla la configurazione senza condividere credenziali o log completi.')
+
+
+st.divider()
+st.subheader('Collaudo persistenza (solo dati fittizi)')
+st.caption('Questa prova usa esclusivamente la tabella tecnica isma_connection_test.')
+if st.button('1. Salva una registrazione fittizia'):
+    try:
+        with psycopg.connect(st.secrets['DATABASE_URL'], connect_timeout=10, sslmode='require') as conn:
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO public.isma_connection_test (id, message, updated_at)
+                               VALUES (1, %s, now())
+                               ON CONFLICT (id) DO UPDATE SET message = EXCLUDED.message,
+                               updated_at = EXCLUDED.updated_at""", ('COLLAUDO ISMA 0.2.6 - dato fittizio',))
+        st.success('Registrazione fittizia salvata nel database.')
+    except Exception:
+        st.error('Salvataggio non riuscito. Non condividere password o log completi.')
+if st.button('2. Leggi la registrazione salvata'):
+    try:
+        with psycopg.connect(st.secrets['DATABASE_URL'], connect_timeout=10, sslmode='require', row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute('SELECT message, updated_at FROM public.isma_connection_test WHERE id = 1')
+                record = cur.fetchone()
+        if record:
+            st.success('Registrazione trovata: ' + record['message'])
+            st.write('Ultimo salvataggio:', record['updated_at'])
+        else:
+            st.warning('Nessuna registrazione di prova ancora salvata.')
+    except Exception:
+        st.error('Lettura non riuscita. Non condividere password o log completi.')
